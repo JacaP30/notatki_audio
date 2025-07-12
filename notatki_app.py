@@ -7,6 +7,11 @@ from hashlib import md5
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
 
+#--------------------------------------------------------------
+# Konfiguracja aplikacji
+#====================================================================
+# Te ustawienia konfigurują aplikację, w tym klucz API OpenAI, model osadzenia, 
+# model transkrypcji audio i nazwę kolekcji w bazie danych Qdrant.
 env = dotenv_values(".env")
 ### Secrets using Streamlit Cloud Mechanism
 # https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management
