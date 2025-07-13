@@ -214,7 +214,7 @@ st.markdown(
         color: transparent;
         padding-bottom: 0.5rem;
     '>
-        🎙️ Notatki audio z wyszukiwaniem semantycznym
+        🎙️ Notatki audio z transkrypcją i wyszukiwaniem semantycznym
     </h1>
     """,
     unsafe_allow_html=True
