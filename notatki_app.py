@@ -214,8 +214,11 @@ st.markdown(
         color: transparent;
         padding-bottom: 0.5rem;
     '>
-        🎙️ Notatki audio z transkrypcją    i wyszukiwaniem semantycznym
+        🎙️ Notatki audio z transkrypcją i wyszukiwaniem semantycznym
     </h1>
+    <div style='text-align:center; font-size:1.2rem; margin-top:1rem;'>
+        <span style='white-space: pre-line;'>i</span>
+    </div>
     """,
     unsafe_allow_html=True
 )
