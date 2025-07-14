@@ -15,10 +15,10 @@ from qdrant_client.models import VectorParams, Distance, PointStruct
 env = dotenv_values(".env")
 ### Secrets using Streamlit Cloud Mechanism
 # https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management
-if 'QDRANT_URL' in st.secrets:
-    env['QDRANT_URL'] = st.secrets['QDRANT_URL']
-if 'QDRANT_API_KEY' in st.secrets:
-    env['QDRANT_API_KEY'] = st.secrets['QDRANT_API_KEY']
+# if 'QDRANT_URL' in st.secrets:
+#     env['QDRANT_URL'] = st.secrets['QDRANT_URL']
+# if 'QDRANT_API_KEY' in st.secrets:
+#     env['QDRANT_API_KEY'] = st.secrets['QDRANT_API_KEY']
 ###
 
 EMBEDDING_MODEL = "text-embedding-3-large"
@@ -213,12 +213,25 @@ st.markdown(
         background-clip: text;
         color: transparent;
         padding-bottom: 0.5rem;
+        margin-bottom: 0;
     '>
-        🎙️ Notatki audio z transkrypcją i wyszukiwaniem semantycznym
+        🎙️ Notatki audio z transkrypcją
     </h1>
-    <div style='text-align:center; font-size:1.2rem; margin-top:1rem;'>
-        <span style='white-space: pre-line;'>i</span>
-    </div>
+    <h2 style='
+        text-align: center; 
+        font-size: 2.8rem; 
+        font-weight: bold; 
+        letter-spacing: 0.5px;
+        background: linear-gradient(90deg, #4F8BF9 0%, #F97C4F 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        color: transparent;
+        margin-top: 0;
+        margin-bottom: 1rem;
+    '>
+        i wyszukiwaniem semantycznym
+    </h2>
     """,
     unsafe_allow_html=True
 )
