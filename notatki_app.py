@@ -153,7 +153,32 @@ def list_notes_from_db(query=None):
 #
 # MAIN
 #
-st.set_page_config(page_title="Audio Notatki", page_icon="🎤", layout="centered")
+st.set_page_config(
+    page_title="Audio Notatki", 
+    page_icon="🎤", 
+    layout="centered"
+    menu_items={
+        "Get help": None,
+        "Report a bug": None,
+        "About": None,}
+    )
+HIDE_STREAMLIT_STYLE = """
+    <style>
+    /* Stare selektory (działają w wielu wersjach) */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* Nowszy toolbar (prawy górny róg) */
+    [data-testid="stToolbar"] {visibility: hidden; height: 0; position: fixed;}
+
+    /* Przyciski deploy/share — różne wersje używają różnych selektorów */
+    .stDeployButton {display: none !important;}
+    [data-testid="stBaseButton-header"] {display: none !important;}
+    [data-testid="stDecoration"] {display: none !important;}
+    </style>
+"""
+st.markdown(HIDE_STREAMLIT_STYLE, unsafe_allow_html=True)
 
 # OpenAI API key protection
 if not st.session_state.get("openai_api_key"):
