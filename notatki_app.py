@@ -6,6 +6,7 @@ from hashlib import md5
 from openai import OpenAI
 from qdrant_client import QdrantClient
 from qdrant_client.models import PointStruct, Distance, VectorParams
+from streamlit_option_menu import option_menu 
 
  
 env = dotenv_values(".env")
@@ -193,7 +194,6 @@ Wyszukiwanie w zapisanych działa semantycznie z wykorzystaniem OpenAI.
 
 assure_db_collection_exists()
 
-from streamlit_option_menu import option_menu 
 selected = option_menu(None, ["Dodaj notatkę", "Wyszukaj notatkę"], 
     icons=['record', 'search'], 
     menu_icon="cast", default_index=0, orientation="horizontal") 
