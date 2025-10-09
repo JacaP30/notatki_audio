@@ -156,11 +156,11 @@ def list_notes_from_db(query=None):
 st.set_page_config(
     page_title="Audio Notatki", 
     page_icon="🎤", 
-    layout="centered"
+    layout="centered",
     menu_items={
         "Get help": None,
         "Report a bug": None,
-        "About": None,}
+        "About": None,}poprawka w kodzie
     )
 HIDE_STREAMLIT_STYLE = """
     <style>
