@@ -4,4 +4,4 @@ qdrant_client
 streamlit
 streamlit-audiorecorder
 pydub
-PyAudio
+#PyAudio
