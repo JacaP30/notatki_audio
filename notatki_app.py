@@ -160,7 +160,7 @@ st.set_page_config(
     menu_items={
         "Get help": None,
         "Report a bug": None,
-        "About": None,}poprawka w kodzie
+        "About": None,}
     )
 HIDE_STREAMLIT_STYLE = """
     <style>
