@@ -152,7 +152,7 @@ def list_notes_from_db(query=None):
 #
 # MAIN
 #
-st.set_page_config(page_title="Audio Notatki", layout="centered")
+st.set_page_config(page_title="Audio Notatki", page_icon="🎤", layout="centered")
 
 # OpenAI API key protection
 if not st.session_state.get("openai_api_key"):
@@ -178,6 +178,8 @@ if "note_audio_bytes" not in st.session_state:
 if "note_text" not in st.session_state:
     st.session_state["note_text"] = ""
 
+
+# Główna część aplikacji
 column1, column2, = st.columns([2,6])
 with column1:
     # Wyświetl logo na górze aplikacji
@@ -213,7 +215,7 @@ if selected == "Dodaj notatkę":
 
         st.audio(st.session_state["note_audio_bytes"], format="audio/mp3")
 
-        if st.button("Transkrybuj audio"):
+        if st.button("🖋️Transkrybuj audio"):
             st.session_state["note_audio_text"] = transcribe_audio(st.session_state["note_audio_bytes"])
 
         if st.session_state["note_audio_text"]:
@@ -221,7 +223,7 @@ if selected == "Dodaj notatkę":
 
         if st.session_state["note_text"] and st.button("Zapisz notatkę", disabled=not st.session_state["note_text"]):
             add_note_to_db(note_text=st.session_state["note_text"])
-            st.toast("Notatka zapisana", icon="🎉")
+            st.toast("Notatka zapisana", icon="💾")
             # Wyczyść pola po zapisaniu
             st.session_state["note_text"] = ""
             st.session_state["note_audio_text"] = ""
