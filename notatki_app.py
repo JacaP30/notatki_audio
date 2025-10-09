@@ -164,18 +164,20 @@ st.set_page_config(
     )
 HIDE_STREAMLIT_STYLE = """
     <style>
-    /* Stare selektory (działają w wielu wersjach) */
+    /* Header, menu, stopka */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
-
-    /* Nowszy toolbar (prawy górny róg) */
     [data-testid="stToolbar"] {visibility: hidden; height: 0; position: fixed;}
+    .stDeployButton, [data-testid="stBaseButton-header"], [data-testid="stDecoration"] {display: none !important;}
 
-    /* Przyciski deploy/share — różne wersje używają różnych selektorów */
-    .stDeployButton {display: none !important;}
-    [data-testid="stBaseButton-header"] {display: none !important;}
-    [data-testid="stDecoration"] {display: none !important;}
+    /* PRAWY DOLNY RÓG — Manage app (Cloud) */
+    button[aria-label="Manage app"] {display: none !important;}
+    a[aria-label="Manage app"] {display: none !important;}
+    [data-testid="manageAppButton"] {display: none !important;}
+    [data-testid="stCloudManageApp"] {display: none !important;}
+    /* Fallback (gdyby a11y/aria się zmieniło) */
+    div[role="complementary"] [title="Manage app"] {display: none !important;}
     </style>
 """
 st.markdown(HIDE_STREAMLIT_STYLE, unsafe_allow_html=True)
