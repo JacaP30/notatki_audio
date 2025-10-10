@@ -19,6 +19,8 @@ if 'QDRANT_URL' in st.secrets:
     env['QDRANT_URL'] = st.secrets['QDRANT_URL']
 if 'QDRANT_API_KEY' in st.secrets:
     env['QDRANT_API_KEY'] = st.secrets['QDRANT_API_KEY']
+if 'OPENAI_API_KEY' in st.secrets:
+    env['OPENAI_API_KEY'] = st.secrets['OPENAI_API_KEY']
 #=======================================================
 
 
@@ -92,11 +94,20 @@ def transcribe_audio(audio_bytes):
     openai_client = get_openai_client()
     audio_file = BytesIO(audio_bytes)
     audio_file.name = "audio.mp3"
-    transcript = openai_client.audio.transcriptions.create(
-        file=audio_file,
-        model=AUDIO_TRANSCRIBE_MODEL,
-        response_format="verbose_json",
-    )
+
+
+
+
+
+    try:
+        transcript = openai_client.audio.transcriptions.create(
+            file=audio_file,
+            model=AUDIO_TRANSCRIBE_MODEL,
+            response_format="verbose_json",
+        )
+    except Exception as e:
+        st.error(f"Błąd transkrypcji audio: {e}")
+        return ""
     text = None
     if isinstance(transcript, dict):
         text = transcript.get("text")
@@ -193,7 +204,8 @@ st.set_page_config(
 
 HIDE_STREAMLIT_STYLE = """
     <style>
-    MainMenu {visibility: hidden;}
+
+    #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     [data-testid="stToolbar"] {visibility: hidden; height: 0; position: fixed;}
