@@ -94,6 +94,7 @@ def transcribe_audio(audio_bytes):
     openai_client = get_openai_client()
     audio_file = BytesIO(audio_bytes)
     audio_file.name = "audio.mp3"
+    audio_file.seek(0)
     try:
         transcript = openai_client.audio.transcriptions.create(
             file=audio_file,
