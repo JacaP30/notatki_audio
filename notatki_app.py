@@ -310,3 +310,4 @@ elif selected == "Wyszukaj notatkę":
                                 delete_note_from_db(note["id"])
                                 st.toast("Notatka usunięta", icon="🗑️")
                                 st.rerun()
+                                
