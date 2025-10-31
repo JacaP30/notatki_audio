@@ -9,8 +9,8 @@ Aplikacja Streamlit do szybkich notatek z transkrypcji audio (OpenAI Whisper) z 
 
 ## Instalacja
 ```bash
-# (opcjonalnie) conda create -n notatki_audio python=3.10 -y
-# conda activate notatki_audio
+(opcjonalnie) conda create -n notatki_audio python=3.10 -y
+conda activate notatki_audio
 pip install -r requirements.txt
 ```
 

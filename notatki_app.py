@@ -15,9 +15,7 @@ from qdrant_client.http.exceptions import UnexpectedResponse
 # Configuration & Env
 env = dotenv_values(".env")
 #=======================================================
-# Ta część jest zakomentowana, bo teraz lokalnie używamy st.secrets
-# Do wdrażania trzeba odkomentować
-# Load Qdrant credentials from Streamlit Secrets if present
+# Secrets
 try:
     if 'QDRANT_URL' in st.secrets:
         env['QDRANT_URL'] = st.secrets['QDRANT_URL']
@@ -86,7 +84,7 @@ def assure_db_collection_exists():
     except UnexpectedResponse as e:
         error_str = str(e).lower()
         error_status = getattr(e, 'status_code', None) or (403 if 'forbidden' in error_str or '403' in str(e) else None) or (404 if '404' in str(e) or 'not found' in error_str else None)
-        
+        # obsługa błędów połączenia z Qdrant
         if error_status == 403 or 'forbidden' in error_str:
             st.error(
                 "🔒 **Błąd autoryzacji (403 Forbidden)**\n\n"
