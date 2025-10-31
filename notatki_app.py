@@ -301,7 +301,7 @@ with column2:
     st.markdown("<h1 style='background: linear-gradient(130deg, #eb2a91ff 25%, #1567eaff 60%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>🎤 Audio Notatki 📝</h1>", unsafe_allow_html=True)
 st.markdown("""
 Aplikacja do tworzenia szybkich notatek z transkrypcji audio, z zapisem w bazie danych Qdrant.<br>
-Wyszukiwanie w zapisanych działa semantycznie z wykorzystaniem OpenAI.
+Wyszukiwanie w zapisanych działa semantycznie z wykorzystaniem modelu AI.
 """, unsafe_allow_html=True)
 
 db_configured = bool(env.get("QDRANT_URL") and env.get("QDRANT_API_KEY"))
