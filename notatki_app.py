@@ -47,8 +47,16 @@ def get_openai_client():
 def get_qdrant_client():
     url = env.get("QDRANT_URL")
     api_key = env.get("QDRANT_API_KEY")
+    
+    # Usuń białe znaki (spacje, nowe linie) z wartości
+    if url:
+        url = url.strip()
+    if api_key:
+        api_key = api_key.strip()
+    
     if not url or not api_key:
         raise RuntimeError("Missing QDRANT_URL and QDRANT_API_KEY in environment or secrets.")
+    
     return QdrantClient(url=url, api_key=api_key)
 
 @st.cache_resource
@@ -57,6 +65,11 @@ def get_qdrant_client_cached():
     return get_qdrant_client()
 
 def assure_db_collection_exists():
+    # Debug: sprawdź czy wartości są poprawnie wczytane (bez pokazywania pełnego klucza)
+    url_from_env = env.get("QDRANT_URL", "").strip() if env.get("QDRANT_URL") else None
+    key_from_env = env.get("QDRANT_API_KEY", "")
+    key_preview = f"{key_from_env[:20]}..." if key_from_env and len(key_from_env) > 20 else "(brak)"
+    
     qdrant_client = get_qdrant_client_cached()
     try:
         if not qdrant_client.collection_exists(QDRANT_COLLECTION_NAME):
@@ -71,9 +84,43 @@ def assure_db_collection_exists():
         else:
             print("Kolekcja już istnieje")
     except UnexpectedResponse as e:
-        st.error(
-            "Nie mogę połączyć się z Qdrant (404 Not Found). Sprawdź poprawność QDRANT_URL (np. 'http://localhost:6333' lub pełny REST URL z Qdrant Cloud) oraz klucza API.\n\n"
-            f"Aktualny QDRANT_URL: {env.get('QDRANT_URL', '(brak)')}\n\nSzczegóły: {e}")
+        error_str = str(e).lower()
+        error_status = getattr(e, 'status_code', None) or (403 if 'forbidden' in error_str or '403' in str(e) else None) or (404 if '404' in str(e) or 'not found' in error_str else None)
+        
+        if error_status == 403 or 'forbidden' in error_str:
+            st.error(
+                "🔒 **Błąd autoryzacji (403 Forbidden)**\n\n"
+                "Klucz API jest nieprawidłowy lub nie ma odpowiednich uprawnień.\n\n"
+                "**Możliwe przyczyny lokalnie (działa na Streamlit Cloud):**\n"
+                "1. Plik `.env` ma białe znaki w wartościach (spacje, nowe linie)\n"
+                "2. Cache Streamlit trzyma stare wartości - wyczyść cache i zrestartuj\n"
+                "3. Wartości z `.env` nie są poprawnie wczytywane\n\n"
+                "**Sprawdź plik `.env` - powinien wyglądać tak (bez cudzysłowów, bez spacji na końcu):**\n"
+                "```\n"
+                "QDRANT_URL=https://07ba8a0d-dc56-4964-9850-6fe9b8110e1e.eu-central-1-0.aws.cloud.qdrant.io\n"
+                "QDRANT_API_KEY=TWÓJ_KLUCZ\n"
+                "```\n\n"
+                f"**Wczytany QDRANT_URL:** {url_from_env or '(brak)'}\n"
+                f"**Wczytany QDRANT_API_KEY (początek):** {key_preview}\n\n"
+                f"**Szczegóły błędu:** {e}\n\n"
+                "**Rozwiązanie:**\n"
+                "1. Sprawdź plik `.env` - usuń wszystkie spacje i nowe linie z wartości\n"
+                "2. Zrestartuj Streamlit (Ctrl+C, potem ponownie `streamlit run notatki_app.py`)\n"
+                "3. Wymuś odświeżenie cache: Menu → Settings → Clear cache")
+        elif error_status == 404 or '404' in str(e) or 'not found' in error_str:
+            st.error(
+                "🔍 **Nie mogę połączyć się z Qdrant (404 Not Found)**\n\n"
+                "Sprawdź poprawność QDRANT_URL.\n\n"
+                "**Dla Qdrant Cloud użyj URL bez portu:**\n"
+                "`https://xxxx-xxxx.cloud.qdrant.io`\n\n"
+                f"**Aktualny QDRANT_URL:** {env.get('QDRANT_URL', '(brak)')}\n\n"
+                f"**Szczegóły:** {e}")
+        else:
+            st.error(
+                f"⚠️ **Błąd połączenia z Qdrant**\n\n"
+                f"**Status:** {error_status or 'nieznany'}\n\n"
+                f"**Aktualny QDRANT_URL:** {env.get('QDRANT_URL', '(brak)')}\n\n"
+                f"**Szczegóły:** {e}")
         st.stop()
 
 def init_openai_key_if_needed():
