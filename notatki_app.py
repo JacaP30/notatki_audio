@@ -2,188 +2,239 @@ from io import BytesIO
 import streamlit as st
 from audiorecorder import audiorecorder
 from dotenv import dotenv_values
+from hashlib import md5
 from openai import OpenAI
-from hashlib import md5 
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance, PointStruct
+from qdrant_client.models import PointStruct, Distance, VectorParams
+from streamlit_option_menu import option_menu
+from streamlit.runtime.secrets import StreamlitSecretNotFoundError
+from pathlib import Path
+from qdrant_client.http.exceptions import UnexpectedResponse
 
-#--------------------------------------------------------------
-# Konfiguracja aplikacji
-#====================================================================
-# Te ustawienia konfigurują aplikację, w tym klucz API OpenAI, model osadzenia, 
-# model transkrypcji audio i nazwę kolekcji w bazie danych Qdrant.
+
+# Configuration & Env
 env = dotenv_values(".env")
-### Secrets using Streamlit Cloud Mechanism
-# https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/secrets-management
-if 'QDRANT_URL' in st.secrets:
-    env['QDRANT_URL'] = st.secrets['QDRANT_URL']
-if 'QDRANT_API_KEY' in st.secrets:
-    env['QDRANT_API_KEY'] = st.secrets['QDRANT_API_KEY']
-###
+#=======================================================
+# Ta część jest zakomentowana, bo teraz lokalnie używamy st.secrets
+# Do wdrażania trzeba odkomentować
+# Load Qdrant credentials from Streamlit Secrets if present
+try:
+    if 'QDRANT_URL' in st.secrets:
+        env['QDRANT_URL'] = st.secrets['QDRANT_URL']
+    if 'QDRANT_API_KEY' in st.secrets:
+        env['QDRANT_API_KEY'] = st.secrets['QDRANT_API_KEY']
+    if 'OPENAI_API_KEY' in st.secrets:
+        env['OPENAI_API_KEY'] = st.secrets['OPENAI_API_KEY']
+except StreamlitSecretNotFoundError:
+    # Brak pliku secrets.toml – pracujemy na wartościach z .env / lokalnych
+    pass
+#=======================================================
 
+
+
+
+
+# Wybór embedowania zgodny z istniejącą kolekcją (3072)
 EMBEDDING_MODEL = "text-embedding-3-large"
-
 EMBEDDING_DIM = 3072
 
-QDRANT_COLLECTION_NAME = "notes"
-
 AUDIO_TRANSCRIBE_MODEL = "whisper-1"
+QDRANT_COLLECTION_NAME = "notes"
 
 def get_openai_client():
     return OpenAI(api_key=st.session_state["openai_api_key"])
+
+def get_qdrant_client():
+    url = env.get("QDRANT_URL")
+    api_key = env.get("QDRANT_API_KEY")
+    if not url or not api_key:
+        raise RuntimeError("Missing QDRANT_URL and QDRANT_API_KEY in environment or secrets.")
+    return QdrantClient(url=url, api_key=api_key)
+
+@st.cache_resource
+def get_qdrant_client_cached():
+    # Prefer cached wrapper if you want to reuse
+    return get_qdrant_client()
+
+def assure_db_collection_exists():
+    qdrant_client = get_qdrant_client_cached()
+    try:
+        if not qdrant_client.collection_exists(QDRANT_COLLECTION_NAME):
+            print("Tworzę kolekcję")
+            qdrant_client.create_collection(
+                collection_name=QDRANT_COLLECTION_NAME,
+                vectors_config=VectorParams(
+                    size=EMBEDDING_DIM,
+                    distance=Distance.COSINE,
+                ),
+            )
+        else:
+            print("Kolekcja już istnieje")
+    except UnexpectedResponse as e:
+        st.error(
+            "Nie mogę połączyć się z Qdrant (404 Not Found). Sprawdź poprawność QDRANT_URL (np. 'http://localhost:6333' lub pełny REST URL z Qdrant Cloud) oraz klucza API.\n\n"
+            f"Aktualny QDRANT_URL: {env.get('QDRANT_URL', '(brak)')}\n\nSzczegóły: {e}")
+        st.stop()
+
+def init_openai_key_if_needed():
+    if not st.session_state.get("openai_api_key"):
+        if "OPENAI_API_KEY" in env:
+            st.session_state["openai_api_key"] = env["OPENAI_API_KEY"]
+        else:
+            st.info("Dodaj swój klucz API OpenAI aby móc korzystać z tej aplikacji")
+            st.session_state["openai_api_key"] = st.text_input("Klucz API", type="password")
+            if st.session_state["openai_api_key"]:
+                st.rerun()
+    if not st.session_state.get("openai_api_key"):
+        st.stop()
+
+def get_embeddings(text):
+    openai_client = get_openai_client()
+    result = openai_client.embeddings.create(
+
+        input=[text],
+        model=EMBEDDING_MODEL,
+        dimensions=EMBEDDING_DIM,
+    )
+    try:
+        return result.data[0].embedding
+    except Exception:
+        if isinstance(result, dict) and "data" in result and isinstance(result["data"], list) and len(result["data"]) > 0:
+            return result["data"][0].get("embedding")
+        raise
 
 def transcribe_audio(audio_bytes):
     openai_client = get_openai_client()
     audio_file = BytesIO(audio_bytes)
     audio_file.name = "audio.mp3"
-    transcript = openai_client.audio.transcriptions.create(
-        file=audio_file,
-        model=AUDIO_TRANSCRIBE_MODEL,
-        response_format="verbose_json"
-    )
-
-    return transcript.text
-#
-# Funkcje do obsługi bazy danych Qdrant
-#====================================================================
-# Te funkcje pozwalają na tworzenie kolekcji w bazie danych Qdrant, 
-# dodawanie notatek do bazy danych oraz wyszukiwanie notatek.
-
-# Funkcja do uzyskiwania klienta Qdrant
-@st.cache_resource
-def get_qdrant_client():
-    return QdrantClient(
-        url=env["QDRANT_URL"],
-        api_key=env["QDRANT_API_KEY"],
-    ) # path=":memory:" lub QdrantClient(url=env["QDRANT_URL"], api_key=env["QDRANT_API_KEY"])
-
-# Funkcja sprawdzająca istnienie kolekcji i tworząca ją, jeśli nie istnieje
-#====================================================================
-# Ta funkcja sprawdza, czy kolekcja o nazwie QDRANT_COLLECTION_NAME istnieje w bazie danych Qdrant.
-# Jeśli nie istnieje, tworzy ją z odpowiednimi parametrami wektorów.
-# Funkcja ta jest wywoływana przy starcie aplikacji, aby zapewnić, że kolekcja jest gotowa do użycia.
-
-def assure_db_collection_exists():
-    qdrant_client = get_qdrant_client()
-    if not qdrant_client.collection_exists(QDRANT_COLLECTION_NAME):
-        print("Tworzę kolekcję")
-        qdrant_client.create_collection(
-            collection_name=QDRANT_COLLECTION_NAME,
-            vectors_config=VectorParams(
-                size=EMBEDDING_DIM,
-                distance=Distance.COSINE,
-            ),
+    audio_file.seek(0)
+    try:
+        transcript = openai_client.audio.transcriptions.create(
+            file=audio_file,
+            model=AUDIO_TRANSCRIBE_MODEL,
+            response_format="verbose_json",
         )
+    except Exception as e:
+        st.error(f"Błąd transkrypcji audio: {e}")
+        return ""
+    text = None
+    if isinstance(transcript, dict):
+        text = transcript.get("text")
     else:
-        print("Kolekcja już istnieje")
-# Funkcje do obsługi notatek
-#====================================================================
-# Te funkcje pozwalają na uzyskiwanie wektora osadzenia dla tekstu, 
-# dodawanie notatek do bazy danych oraz wyszukiwanie notatek w bazie danych.
-def get_embedding(text):
-    openai_client = get_openai_client()
-    result = openai_client.embeddings.create(
-        input=[text],
-        model=EMBEDDING_MODEL,
-        dimensions=EMBEDDING_DIM,
-    )
+        text = getattr(transcript, "text", None)
+        if text is None and hasattr(transcript, "data"):
+            data = getattr(transcript, "data")
+            if isinstance(data, dict):
+                text = data.get("text")
+            elif isinstance(data, list) and len(data) > 0:
+                t0 = data[0]
+                text = getattr(t0, "text", None) or (t0.get("text") if isinstance(t0, dict) else None)
+    return text if isinstance(text, str) else ""
 
-    return result.data[0].embedding
-
-# Funkcja do dodawania notatki do bazy danych
-#====================================================================
-# Ta funkcja dodaje notatkę do bazy danych Qdrant. 
-# Przyjmuje tekst notatki jako argument, oblicza wektor osadzenia dla tego tekstu 
-# i zapisuje go w kolekcji QDRANT_COLLECTION_NAME wraz z tekstem notatki.
 def add_note_to_db(note_text):
-    qdrant_client = get_qdrant_client()
-    points_count = qdrant_client.count(
-        collection_name=QDRANT_COLLECTION_NAME,
-        exact=True,
-    )
+    qdrant_client = get_qdrant_client_cached()
+    import time
+
+    # Używamy timestamp jako ID aby uniknąć konfliktów
+    note_id = int(time.time() * 1000)  # milliseconds timestamp
     qdrant_client.upsert(
         collection_name=QDRANT_COLLECTION_NAME,
         points=[
             PointStruct(
-                id=points_count.count + 1,
-                vector=get_embedding(text=note_text),
+                id=note_id,
+                vector=get_embeddings(text=note_text),
                 payload={
                     "text": note_text,
+                    "created_at": note_id,  # zapisujemy timestamp do sortowania
                 },
             )
         ]
     )
 
-# Funkcja do listowania notatek z bazy danych
-#====================================================================
-# Ta funkcja zwraca listę notatek z bazy danych Qdrant. 
-# Jeśli podano zapytanie, wyszukuje notatki na podstawie wektora osadzenia zapytania.
-# W przeciwnym razie zwraca ostatnie 10 notatek.
+def delete_note_from_db(note_id):
+    qdrant_client = get_qdrant_client_cached()
+    qdrant_client.delete(
+        collection_name=QDRANT_COLLECTION_NAME,
+        points_selector=[note_id],
+    )
+
 def list_notes_from_db(query=None):
-    qdrant_client = get_qdrant_client()
+    """Pobiera notatki: wszystkie (bez query) lub semantycznie (z query)"""
+    qdrant_client = get_qdrant_client_cached()
+
     if not query:
-        notes = qdrant_client.scroll(collection_name=QDRANT_COLLECTION_NAME, limit=10)[0]
+        notes = qdrant_client.scroll(
+            collection_name=QDRANT_COLLECTION_NAME,
+            limit=100,
+            with_payload=True,
+            with_vectors=False,
+        )[0]
+
         result = []
         for note in notes:
-            text = note.payload["text"] if note.payload and "text" in note.payload else ""
+            payload = note.payload or {}
             result.append({
-                "text": text,
+                "id": note.id,
+                "text": payload.get("text", ""),
+                "created_at": payload.get("created_at", 0),
                 "score": None,
             })
-
+        result.sort(key=lambda x: x["created_at"], reverse=True)
         return result
-
-    # Jeśli podano zapytanie, wyszukujemy notatki na podstawie wektora osadzenia zapytania
-    #====================================================================
-    # Ta część kodu wyszukuje notatki w bazie danych Qdrant na podstawie wektora osadzenia zapytania.
-    # Zwraca listę notatek z ich tekstem i wynikiem wyszukiwania.   
     else:
+        # Wyszukiwanie semantyczne
         notes = qdrant_client.search(
             collection_name=QDRANT_COLLECTION_NAME,
-            query_vector=get_embedding(text=query),
-            limit=10,
+            query_vector=get_embeddings(text=query),
+
+            limit=100,
+            with_payload=True,
         )
+
         result = []
         for note in notes:
-            text = note.payload["text"] if note.payload and "text" in note.payload else ""
+            payload = note.payload or {}
             result.append({
-                "text": text,
+                "id": note.id,
+                "text": payload.get("text", ""),
+                "created_at": payload.get("created_at", 0),
                 "score": note.score,
             })
-
         return result
+    
+#=======================================================
+# MAIN
+st.set_page_config(
+    page_title="Audio Notatki",
+    page_icon="🎤",
+    layout="centered",
+    menu_items={"Get help": None, "Report a bug": None, "About": None}
+)
 
+HIDE_STREAMLIT_STYLE = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stToolbar"] {visibility: hidden; height: 0; position: fixed;}
+    .stDeployButton, [data-testid="stBaseButton-header"], [data-testid="stDecoration"] {display: none !important;}
 
-# GŁÓWNA APLIKACJA
-#====================================================================
-# Ustawienia strony Streamlit
-#====================================================================
-# Te ustawienia konfigurują tytuł strony, ikonę i układ aplikacji Streamlit.
+    /* PRAWY DOLNY RÓG — Manage app (Cloud) */
+    button[aria-label="Manage app"] {display: none !important;}
+    a[aria-label="Manage app"] {display: none !important;}
+    [data-testid="manageAppButton"] {display: none !important;}
+    [data-testid="stCloudManageApp"] {display: none !important;}
+    div[role="complementary"] [title="Manage app"] {display: none !important;}
+    </style>
+"""
+st.markdown(HIDE_STREAMLIT_STYLE, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Notatki audio",page_icon=":microphone:",layout="centered",)#initial_sidebar_state="expanded")
-
-# Ochrona klucza API OpenAI
-if not st.session_state.get("openai_api_key"):
-    if "OPENAI_API_KEY" in env:
-        st.session_state["openai_api_key"] = env["OPENAI_API_KEY"]
-
-    else:
-        st.info("Dodaj swój klucz API OpenAI aby móc korzystać z tej aplikacji")
-        st.session_state["openai_api_key"] = st.text_input("Klucz API", type="password")
-        if st.session_state["openai_api_key"]:
-            st.rerun()
-
-# Sprawdzenie, czy klucz API OpenAI jest ustawiony
-#====================================================================
-# Jeśli klucz API OpenAI nie jest ustawiony, aplikacja zostaje zatrzymana.
-# Użytkownik musi wprowadzić swój klucz API, aby kontynuować.
+# OpenAI API key protection
+init_openai_key_if_needed()
 if not st.session_state.get("openai_api_key"):
     st.stop()
 
-# Inicjalizacja sesji Streamlit
-#====================================================================
-# Te zmienne sesji przechowują stan aplikacji, takie jak audio notatki, tekst notatek i ich MD5.
-# Są one używane do przechowywania danych między interakcjami użytkownika.  
+# Session state initialization
 if "note_audio_bytes_md5" not in st.session_state:
     st.session_state["note_audio_bytes_md5"] = None
 
@@ -193,121 +244,87 @@ if "note_audio_bytes" not in st.session_state:
 if "note_text" not in st.session_state:
     st.session_state["note_text"] = ""
 
-if "note_audio_text" not in st.session_state:
-    st.session_state["note_audio_text"] = ""
+# Główna część aplikacji
+column1, column2 = st.columns([2,6])
+with column1:
+    logo_path = Path("logo.png")
+    if logo_path.exists():
+        st.image(str(logo_path), width=120)
+    else:
+        st.markdown("<div style='font-size: 56px; line-height: 1;'>🎤</div>", unsafe_allow_html=True)
+with column2:
+    st.markdown("<h1 style='background: linear-gradient(130deg, #eb2a91ff 25%, #1567eaff 60%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;'>🎤 Audio Notatki 📝</h1>", unsafe_allow_html=True)
+st.markdown("""
+Aplikacja do tworzenia szybkich notatek z transkrypcji audio, z zapisem w bazie danych Qdrant.<br>
+Wyszukiwanie w zapisanych działa semantycznie z wykorzystaniem OpenAI.
+""", unsafe_allow_html=True)
 
-# Sprawdzenie istnienia kolekcji w bazie danych
-#====================================================================
-# Ta funkcja jest wywoływana przy starcie aplikacji, aby zapewnić, że kolekcja jest gotowa do użycia.
-# Jeśli kolekcja nie istnieje, zostanie utworzona z odpowiednimi parametrami wektorów.
-st.markdown(
-    """
-    <h1 style='
-        text-align: center; 
-        font-size: 2.8rem; 
-        font-weight: bold; 
-        letter-spacing: 1px;
-        background: linear-gradient(90deg, #4F8BF9 0%, #F97C4F 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        color: transparent;
-        padding-bottom: 0.5rem;
-        margin-bottom: 0;
-    '>
-        🎙️ Notatki audio z transkrypcją
-    </h1>
-    <h2 style='
-        text-align: center; 
-        font-size: 2.8rem; 
-        font-weight: bold; 
-        letter-spacing: 0.5px;
-        background: linear-gradient(90deg, #4F8BF9 0%, #F97C4F 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        color: transparent;
-        margin-top: 0;
-        margin-bottom: 1rem;
-    '>
-        i wyszukiwaniem semantycznym
-    </h2>
-    """,
-    unsafe_allow_html=True
-)
-assure_db_collection_exists()
+db_configured = bool(env.get("QDRANT_URL") and env.get("QDRANT_API_KEY"))
 
+if db_configured:
+    assure_db_collection_exists()
+else:
+    st.warning("Konfiguracja Qdrant nie ustawiona. Aby zapisywać notatki, ustaw QDRANT_URL i QDRANT_API_KEY w .env lub Secrets.")
 
-# Główna logika aplikacji
-#====================================================================
-# Ta część aplikacji obsługuje interakcje użytkownika, takie jak nagrywanie audio, transkrypcja audio i wyszukiwanie notatek.
-# Użytkownik może nagrać notatkę audio, transkrybować ją do tekstu i zapisać ją w bazie danych.
-# Użytkownik może również wyszukiwać notatki na podstawie tekstu.
-add_tab, search_tab = st.tabs(["🎙️ Nagraj notatkę", "🔍 Wyszukaj w notatkach"], width="stretch")
-# Streamlit nie pozwala na bezpośrednią konfigurację wyglądu przycisków (np. kolorów, rozmiaru) przez parametry funkcji st.button.
-# Możesz jednak użyć komponentu st.markdown z HTML/CSS oraz unsafe_allow_html=True, aby stylizować przyciski, lub użyć bibliotek zewnętrznych (np. streamlit-extras).
-# Przykład niestandardowego przycisku:
-# st.markdown('<button style="background-color: #4CAF50; color: white; padding: 10px 24px; border: none; border-radius: 4px;">Niestandardowy przycisk</button>', unsafe_allow_html=True)
-with add_tab:
+selected = option_menu(None, ["Dodaj notatkę", "Wyszukaj notatkę"],
+    icons=['record', 'search'], 
+    menu_icon="cast", default_index=0, orientation="horizontal")
+
+if selected == "Dodaj notatkę":
     note_audio = audiorecorder(
-        start_prompt= "⏺️ Nagraj swoją notatkę",
-        stop_prompt="🔴 Zatrzymaj nagrywanie",#icon_size=100,
-
+        start_prompt="Nagraj notatkę",
+        stop_prompt="Zatrzymaj nagrywanie",
     )
-    # Sprawdzenie, czy nagrano audio
-    #====================================================================
-    # Jeśli nagrano audio, jest ono konwertowane do formatu MP3 i przechowywane w sesji.
-    # Następnie sprawdzany jest MD5 tego audio, aby upewnić się, że nie zostało ono zmienione.
-    # Jeśli MD5 się zmieni, tekst notatki jest resetowany.
-    # Użytkownik może odsłuchać nagranie, transkrybować je do tekstu i edytować notatkę przed zapisaniem jej w bazie danych.
     if note_audio:
         audio = BytesIO()
         note_audio.export(audio, format="mp3")
         st.session_state["note_audio_bytes"] = audio.getvalue()
-
-        curent_md5 = md5(st.session_state["note_audio_bytes"]).hexdigest()
-
-        # Sprawdzenie, czy MD5 audio się zmienił
-        #====================================================================
-        # Jeśli MD5 audio jest inny niż poprzednio zapisany, 
-        # resetujemy tekst notatki i ustawiamy nowy MD5.
-        # Dzięki temu użytkownik może nagrać nowe audio i transkrybować je bez problemów.
-        if st.session_state["note_audio_bytes_md5"] != curent_md5:
+        current_md5 = md5(st.session_state["note_audio_bytes"]).hexdigest()
+        if st.session_state["note_audio_bytes_md5"] != current_md5:
             st.session_state["note_audio_text"] = ""
             st.session_state["note_text"] = ""
-            st.session_state["note_audio_bytes_md5"] = curent_md5
+            st.session_state["note_audio_bytes_md5"] = current_md5
 
         st.audio(st.session_state["note_audio_bytes"], format="audio/mp3")
 
-        # Transkrypcja audio
-        #====================================================================
-        # Jeśli użytkownik kliknie przycisk "Transkrybuj audio", 
-        # audio jest transkrybowane do tekstu za pomocą modelu Whisper
-        if st.button("🖋️ Transkrybuj audio"):
+        if st.button("🖋️Transkrybuj audio"):
             st.session_state["note_audio_text"] = transcribe_audio(st.session_state["note_audio_bytes"])
 
-        # Wyświetlenie transkrybowanego tekstu
-        #====================================================================
-        # Jeśli transkrybowany tekst jest dostępny, 
-        # jest on wyświetlany w polu tekstowym, gdzie użytkownik może go edytować.
         if st.session_state["note_audio_text"]:
             st.session_state["note_text"] = st.text_area("Edytuj notatkę", value=st.session_state["note_audio_text"])
-        # Umożliwienie użytkownikowi edytowania notatki         
+
         if st.session_state["note_text"] and st.button("Zapisz notatkę", disabled=not st.session_state["note_text"]):
             add_note_to_db(note_text=st.session_state["note_text"])
             st.toast("Notatka zapisana", icon="💾")
+            st.session_state["note_text"] = ""
+            st.session_state["note_audio_text"] = ""
+            st.session_state["note_audio_bytes"] = None
+            st.session_state["note_audio_bytes_md5"] = None
+            st.rerun()
+elif selected == "Wyszukaj notatkę":
+    query = st.text_input("Wyszukaj notatkę")
 
-# Wyszukiwanie notatek
-#====================================================================
-# Ta część aplikacji umożliwia użytkownikowi wyszukiwanie notatek na podstawie tekstu.
-# Użytkownik może wpisać zapytanie w polu tekstowym i kliknąć przycisk "Szukaj", 
-# aby zobaczyć wyniki wyszukiwania. Wyniki są wyświetlane w kontenerach z pogrubionym tekstem i ewentualnym wynikiem wyszukiwania.  
-with search_tab:
-    query = st.text_input("", placeholder="Wpisz kontekst wyszukiwania", label_visibility="collapsed")
-    if st.button("Szukaj"):
-        for note in list_notes_from_db(query):
-            with st.container(border=True):
-                st.markdown(note["text"])
-                if note["score"]:
-                    st.markdown(f':violet[{note["score"]}]')
+    # Przycisk wyszukiwania
+    search_clicked = st.button("Szukaj")
 
+    if not db_configured:
+        st.warning("Konfiguracja Qdrant nie ustawiona. Aby przeszukiwać notatki, ustaw QDRANT_URL i QDRANT_API_KEY w .env lub Secrets.")
+    else:
+        if search_clicked or not query:
+            notes = list_notes_from_db(query)
+            if not notes:
+                st.info("Nie znaleziono żadnych notatek")
+            else:
+                for note in notes:
+                    with st.container():
+                        col1, col2 = st.columns([5,1])
+                        with col1:
+                            st.markdown(note["text"])
+                            if note["score"]:
+                                st.markdown(f':violet[{note["score"]}]')
+                        with col2:
+                            if st.button("🗑️", key=f"delete_{note['id']}", help="Usuń notatkę"):
+                                delete_note_from_db(note["id"])
+                                st.toast("Notatka usunięta", icon="🗑️")
+                                st.rerun()
+                                
