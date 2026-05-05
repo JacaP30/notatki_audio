@@ -51,8 +51,32 @@ EMBEDDING_DIM = 3072
 AUDIO_TRANSCRIBE_MODEL = "whisper-1"
 QDRANT_COLLECTION_NAME = "notes"
 
+def is_demo_mode():
+    return bool(st.session_state.get("demo_mode"))
+
+
+def validate_openai_api_key(api_key):
+    """Sprawdza klucz przez lekkie zapytanie do API OpenAI (lista modeli)."""
+    if not api_key or not isinstance(api_key, str):
+        return False
+    api_key = api_key.strip()
+    if len(api_key) < 16:
+        return False
+    try:
+        client = OpenAI(api_key=api_key, timeout=20.0)
+        next(iter(client.models.list()), None)
+        return True
+    except Exception:
+        return False
+
+
 def get_openai_client():
-    return OpenAI(api_key=st.session_state["openai_api_key"])
+    if is_demo_mode():
+        raise RuntimeError("OpenAI nie jest dostępne w trybie demo.")
+    key = st.session_state.get("openai_api_key")
+    if not key:
+        raise RuntimeError("Brak skonfigurowanego klucza OpenAI.")
+    return OpenAI(api_key=key)
 
 def get_qdrant_client():
     url = env.get("QDRANT_URL")
@@ -134,17 +158,73 @@ def assure_db_collection_exists():
                 f"**Szczegóły:** {e}")
         st.stop()
 
-def init_openai_key_if_needed():
-    if not st.session_state.get("openai_api_key"):
-        if "OPENAI_API_KEY" in env:
-            st.session_state["openai_api_key"] = env["OPENAI_API_KEY"]
-        else:
-            st.info("Dodaj swój klucz API OpenAI aby móc korzystać z tej aplikacji")
-            st.session_state["openai_api_key"] = st.text_input("Klucz API", type="password")
-            if st.session_state["openai_api_key"]:
+def startup_access_gate():
+    """Na starcie: zweryfikuj klucz z env / Secrets, pokaż formularz lub tryb demo."""
+    if is_demo_mode():
+        return
+
+    if st.session_state.get("openai_api_key") and st.session_state.get("openai_key_validated"):
+        return
+
+    if not st.session_state.get("_env_openai_checked"):
+        st.session_state["_env_openai_checked"] = True
+        raw = env.get("OPENAI_API_KEY")
+        if raw:
+            key = str(raw).strip()
+            if key:
+                if validate_openai_api_key(key):
+                    st.session_state["openai_api_key"] = key
+                    st.session_state["openai_key_validated"] = True
+                    return
+                st.session_state["_env_openai_key_invalid"] = True
+
+    st.markdown("### Dostęp do aplikacji")
+    if st.session_state.get("_env_openai_key_invalid"):
+        st.warning(
+            "Klucz OpenAI z pliku `.env` lub **Secrets** jest nieprawidłowy albo nie działa z API. "
+            "Wpisz poprawny klucz poniżej albo użyj trybu demo."
+        )
+
+    st.markdown(
+        "Aplikacja potrzebuje klucza **OpenAI** do transkrypcji i wyszukiwania semantycznego. "
+        "Możesz też włączyć **tryb demo**, aby przejrzeć interfejs bez wywołań API."
+    )
+
+    mode = st.radio(
+        "Wybierz sposób startu:",
+        ["Wpisz klucz API OpenAI", "Tryb demo (oglądanie bez API)"],
+        horizontal=True,
+        key="startup_mode_radio",
+    )
+
+    if mode.startswith("Tryb demo"):
+        if st.button("Wejdź w tryb demo", type="primary"):
+            st.session_state["demo_mode"] = True
+            st.session_state.pop("openai_api_key", None)
+            st.session_state["openai_key_validated"] = False
+            st.rerun()
+    else:
+        st.text_input(
+            "Klucz API OpenAI",
+            type="password",
+            key="startup_api_key_input",
+            help="Klucz nie jest zapisywany na stałe w tej sesji poza pamięcią przeglądarki (session state).",
+        )
+        key_input = st.session_state.get("startup_api_key_input", "")
+        if st.button("Zatwierdź klucz i kontynuuj", type="primary"):
+            if not key_input or not str(key_input).strip():
+                st.error("Wpisz klucz API.")
+            elif validate_openai_api_key(str(key_input).strip()):
+                st.session_state["openai_api_key"] = str(key_input).strip()
+                st.session_state["openai_key_validated"] = True
+                st.session_state.pop("demo_mode", None)
                 st.rerun()
-    if not st.session_state.get("openai_api_key"):
-        st.stop()
+            else:
+                st.error(
+                    "Nie udało się zweryfikować klucza. Sprawdź poprawność, saldo konta i połączenie z internetem."
+                )
+
+    st.stop()
 
 def get_embeddings(text):
     openai_client = get_openai_client()
@@ -709,10 +789,7 @@ HIDE_STREAMLIT_STYLE = """
 """
 st.markdown(HIDE_STREAMLIT_STYLE, unsafe_allow_html=True)
 
-# OpenAI API key protection
-init_openai_key_if_needed()
-if not st.session_state.get("openai_api_key"):
-    st.stop()
+startup_access_gate()
 
 # Session state initialization
 if "note_audio_bytes_md5" not in st.session_state:
@@ -763,6 +840,22 @@ Aplikacja do tworzenia szybkich notatek z transkrypcji audio, z zapisem w bazie 
 Wyszukiwanie w zapisanych działa semantycznie z wykorzystaniem modelu AI.
 """, unsafe_allow_html=True)
 
+if is_demo_mode():
+    d1, d2 = st.columns([4, 1])
+    with d1:
+        st.info(
+            "**Tryb demo** — możesz przeglądać interfejs i listę notatek z Qdrant. "
+            "Transkrypcja, zapis notatek, wyszukiwanie po frazie (embeddingi) i zapis transkrypcji do bazy są wyłączone."
+        )
+    with d2:
+        if st.button("Wpisz klucz API", help="Wyjdź z demo i zweryfikuj klucz OpenAI"):
+            st.session_state["demo_mode"] = False
+            st.session_state["openai_key_validated"] = False
+            st.session_state.pop("openai_api_key", None)
+            st.session_state.pop("_env_openai_checked", None)
+            st.session_state.pop("_env_openai_key_invalid", None)
+            st.rerun()
+
 db_configured = bool(env.get("QDRANT_URL") and env.get("QDRANT_API_KEY"))
 
 if db_configured:
@@ -775,6 +868,8 @@ selected = option_menu(None, ["Dodaj notatkę", "Wyszukaj notatkę", "Transkrypc
     menu_icon="cast", default_index=0, orientation="horizontal")
 
 if selected == "Dodaj notatkę":
+    if is_demo_mode():
+        st.caption("Tryb demo: nagranie działa lokalnie, ale transkrypcja i zapis do bazy wymagają klucza API.")
     note_audio = audiorecorder(
         start_prompt="Nagraj notatkę",
         stop_prompt="Zatrzymaj nagrywanie",
@@ -791,13 +886,16 @@ if selected == "Dodaj notatkę":
 
         st.audio(st.session_state["note_audio_bytes"], format="audio/mp3")
 
-        if st.button("🖋️Transkrybuj audio"):
+        if st.button("🖋️Transkrybuj audio", disabled=is_demo_mode()):
             st.session_state["note_audio_text"] = transcribe_audio(st.session_state["note_audio_bytes"])
 
         if st.session_state["note_audio_text"]:
             st.session_state["note_text"] = st.text_area("Edytuj notatkę", value=st.session_state["note_audio_text"])
 
-        if st.session_state["note_text"] and st.button("Zapisz notatkę", disabled=not st.session_state["note_text"]):
+        if st.session_state["note_text"] and st.button(
+            "Zapisz notatkę",
+            disabled=not st.session_state["note_text"] or is_demo_mode(),
+        ):
             add_note_to_db(note_text=st.session_state["note_text"])
             st.toast("Notatka zapisana", icon="💾")
             st.session_state["note_text"] = ""
@@ -807,6 +905,13 @@ if selected == "Dodaj notatkę":
             st.rerun()
 elif selected == "Wyszukaj notatkę":
     query = st.text_input("Wyszukaj notatkę")
+    query_raw = (query or "").strip()
+    demo_semantic_blocked = is_demo_mode() and bool(query_raw)
+    if demo_semantic_blocked:
+        st.info(
+            "W trybie demo wyszukiwanie po tekście (semantyczne) jest wyłączone. "
+            "Zostaw puste pole i kliknij „Szukaj”, aby zobaczyć listę zapisanych notatek."
+        )
 
     # Przycisk wyszukiwania
     search_clicked = st.button("Szukaj")
@@ -815,7 +920,10 @@ elif selected == "Wyszukaj notatkę":
         st.warning("Konfiguracja Qdrant nie ustawiona. Aby przeszukiwać notatki, ustaw QDRANT_URL i QDRANT_API_KEY w .env lub Secrets.")
     else:
         if search_clicked or not query:
-            notes = list_notes_from_db(query)
+            if demo_semantic_blocked:
+                notes = []
+            else:
+                notes = list_notes_from_db(query_raw if query_raw else None)
             if not notes:
                 st.info("Nie znaleziono żadnych notatek")
             else:
@@ -827,12 +935,22 @@ elif selected == "Wyszukaj notatkę":
                             if note["score"]:
                                 st.markdown(f':violet[{note["score"]}]')
                         with col2:
-                            if st.button("🗑️", key=f"delete_{note['id']}", help="Usuń notatkę"):
+                            if st.button(
+                                "🗑️",
+                                key=f"delete_{note['id']}",
+                                help="Usuń notatkę",
+                                disabled=is_demo_mode(),
+                            ):
                                 delete_note_from_db(note["id"])
                                 st.toast("Notatka usunięta", icon="🗑️")
                                 st.rerun()
 elif selected == "Transkrypcja z pliku":
     st.markdown("### 📁 Wczytaj plik audio z dysku lub URL")
+    if is_demo_mode():
+        st.info(
+            "Tryb demo: możesz wczytać plik, odsłuchać go i ewentualnie skonwertować lokalnie do MP3. "
+            "Transkrypcja przez OpenAI oraz zapis do bazy są wyłączone."
+        )
     
     # Wybór źródła audio
     source_type = st.radio(
@@ -1048,7 +1166,7 @@ elif selected == "Transkrypcja z pliku":
                 help="Niższa temperatura (0.0) daje bardziej precyzyjne i deterministyczne wyniki. Wyższa temperatura może być bardziej kreatywna, ale mniej precyzyjna."
             )
         
-        if st.button("🖋️ Transkrybuj ze znacznikami czasu", type="primary"):
+        if st.button("🖋️ Transkrybuj ze znacznikami czasu", type="primary", disabled=is_demo_mode()):
             with st.spinner("Transkrypcja w toku... To może chwilę potrwać."):
                 transcript_data = transcribe_audio_with_timestamps(
                     audio_to_transcribe, 
@@ -1101,7 +1219,7 @@ elif selected == "Transkrypcja z pliku":
             st.divider()
             
             # Opcja zapisania transkrypcji jako notatki
-            if db_configured:
+            if db_configured and not is_demo_mode():
                 st.markdown("### 💾 Zapisz jako notatkę")
                 if st.button("📝 Zapisz transkrypcję jako notatkę", type="primary", help="Zapisze całą transkrypcję jako notatkę w bazie danych"):
                     try:
@@ -1113,8 +1231,10 @@ elif selected == "Transkrypcja z pliku":
                             st.error("❌ Nie można zapisać pustej transkrypcji")
                     except Exception as e:
                         st.error(f"❌ Błąd podczas zapisywania notatki: {e}")
-            else:
+            elif not db_configured:
                 st.info("ℹ️ Aby zapisać transkrypcję jako notatkę, skonfiguruj QDRANT_URL i QDRANT_API_KEY w .env lub Secrets.")
+            else:
+                st.caption("Tryb demo: zapis transkrypcji do bazy wymaga klucza OpenAI (wyjdź z demo).")
             
             st.divider()
             
