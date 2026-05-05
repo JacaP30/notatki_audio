@@ -1,8 +1,10 @@
 openai
 python-dotenv
-qdrant_client
+qdrant-client
+requests
+reportlab
 streamlit
 streamlit-audiorecorder
 pydub
-streamlit_option_menu
-#PyAudio
+streamlit-option-menu
+# PyAudio — opcjonalnie, jeśli nagrywanie wymaga natywnego backendu audio na danym OS
